@@ -39,6 +39,9 @@ public class SoundsManager : MonoBehaviour
         }
     }
 
+	private readonly Dictionary<AudioClip, AudioClip> _resampledCache =
+		new Dictionary<AudioClip, AudioClip>();
+
     private readonly List<AudioSource> _sfxSources = new List<AudioSource>();
     private Transform _sfxContainer;
 
@@ -298,6 +301,71 @@ public class SoundsManager : MonoBehaviour
         AudioSourceBackground.Play();
     }
 
+	private AudioClip HDAudio(AudioClip clip)
+	{
+		if (clip == null)
+			return null;
+
+		// leave >hd untouched
+		int target = 44100;
+		if (clip.frequency >= target)
+			return clip;
+
+		// already converted
+		if (_resampledCache.TryGetValue(clip, out var cached))
+			return cached;
+
+		int sourceFreq = clip.frequency;
+		int targetFreq = target;
+
+		int channels = clip.channels;
+
+		float ratio = (float)targetFreq / sourceFreq;
+
+		int sourceSamples = clip.samples;
+		int targetSamples = Mathf.CeilToInt(sourceSamples * ratio);
+
+		float[] sourceData = new float[sourceSamples * channels];
+		clip.GetData(sourceData, 0);
+
+		float[] targetData = new float[targetSamples * channels];
+
+		// linear interpolation upsampling
+		for (int i = 0; i < targetSamples; i++)
+		{
+			float srcPos = i / ratio;
+
+			int srcIndex = Mathf.FloorToInt(srcPos);
+			int srcNext = Mathf.Min(srcIndex + 1, sourceSamples - 1);
+
+			float t = srcPos - srcIndex;
+
+			for (int ch = 0; ch < channels; ch++)
+			{
+				float a = sourceData[srcIndex * channels + ch];
+				float b = sourceData[srcNext * channels + ch];
+
+				targetData[i * channels + ch] = Mathf.Lerp(a, b, t);
+			}
+		}
+
+		AudioClip converted = AudioClip.Create(
+			clip.name + $"_{target}",
+			targetSamples,
+			channels,
+			targetFreq,
+			false
+		);
+
+		converted.SetData(targetData, 0);
+
+		_resampledCache[clip] = converted;
+
+		Debug.Log($"Resampled {clip.name}: {sourceFreq} -> {targetFreq}");
+
+		return converted;
+	}
+
     // =========================================================
     // SFX
     // =========================================================
@@ -312,7 +380,7 @@ public class SoundsManager : MonoBehaviour
     {
         foreach (var name in soundNames)
         {
-            var clip = ResourcesLoader.LoadAudioClip(name);
+            var clip = HDAudio(ResourcesLoader.LoadAudioClip(name));
             if (clip == null)
             {
                 Debug.LogError("Clip not found: " + name);
@@ -328,7 +396,7 @@ public class SoundsManager : MonoBehaviour
 
     public void PlaySoundsOnce(string soundName, float volume, float pitch = 1f, float panStereo = 0f)
     {
-        var clip = ResourcesLoader.LoadAudioClip(soundName);
+        var clip = HDAudio(ResourcesLoader.LoadAudioClip(soundName));
 
         if (clip == null)
         {
@@ -348,7 +416,7 @@ public class SoundsManager : MonoBehaviour
     public void PlaySoundAt(string soundName, Vector3 position,
         float volume = 1f, float pitch = 1f, float spatialBlend = 1f)
     {
-        var clip = ResourcesLoader.LoadAudioClip(soundName);
+        var clip = HDAudio(ResourcesLoader.LoadAudioClip(soundName));
         if (clip == null)
         {
             Debug.LogError("Clip not found: " + soundName);
@@ -390,7 +458,7 @@ public class SoundsManager : MonoBehaviour
 
         foreach (var name in soundNames)
         {
-            var clip = ResourcesLoader.LoadAudioClip(name);
+            var clip = HDAudio(ResourcesLoader.LoadAudioClip(name));
             if (clip == null)
                 continue;
 
